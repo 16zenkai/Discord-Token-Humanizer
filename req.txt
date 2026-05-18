@@ -1,0 +1,10 @@
+certifi==2024.2.2
+colorama==0.4.6
+websocket-client==1.6.0
+requests>=2.31.0
+curl-cffi>=0.5.10
+tls-client
+httpx
+aiohttp
+pystyle
+python-dateutil

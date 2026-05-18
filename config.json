@@ -1,0 +1,10 @@
+{
+    "max_threads": 3,
+    "avatar_dimension": 256,
+    "max_avatar_cache": 100,
+    "update_display_name": true,
+    "update_bio": true,
+    "update_pronouns": true,
+    "update_avatar": true,
+    "update_hypesquad": true
+}
