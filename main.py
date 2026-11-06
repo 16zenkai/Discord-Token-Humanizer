@@ -2,6 +2,12 @@ import sys
 import subprocess
 import os
 
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 if not getattr(sys, 'frozen', False):
     REQUIRED_PACKAGES = {
         'primp': 'primp',
@@ -254,110 +260,217 @@ proxy_manager: Optional[ProxyManager] = None
 import ctypes
 import shutil
 
-class _Logger:
-    NEON_CYAN   = "\033[38;2;0;255;255m"
-    NEON_GREEN  = "\033[38;2;57;255;20m"
-    NEON_PINK   = "\033[38;2;255;16;240m"
-    NEON_RED    = "\033[38;2;255;49;49m"
-    NEON_YELLOW = "\033[38;2;255;236;39m"
-    NEON_PURPLE = "\033[38;2;191;64;255m"
-    DIM         = "\033[38;2;90;90;120m"
-    SOFT        = "\033[38;2;180;180;200m"
-    RESET       = "\033[0m"
+Fore.GRAY = "\033[38;5;244m"
+Fore.PURPLE = "\033[38;5;99m"
+Fore.NEON_PINK = "\033[38;5;201m"
+Fore.CYAN_BLUE = "\033[38;5;38m"
+Fore.MINT_GREEN = "\033[38;5;48m"
+Fore.CORAL_RED = "\033[38;5;204m"
+Fore.GOLD = "\033[38;5;214m"
 
+
+class Logger:
     def __init__(self):
-        self._lock = threading.Lock()
-        self.prefix = f"{self.NEON_PURPLE}\u26a1{self.RESET} {self.NEON_CYAN}Zenkai{self.RESET}"
+        self.DIM = "\033[38;5;240m"
+        self.TIME_GRAY = "\033[38;5;244m"
+        self.KEY_GRAY = "\033[38;5;242m"
+        self.WHITE = "\033[38;5;253m"
+        self.SUCCESS = "\033[38;5;120m"
+        self.FAIL = "\033[38;5;203m"
+        self.WARN = "\033[38;5;214m"
+        self.INFO = "\033[38;5;75m"
+        self.PURPLE = "\033[38;5;141m"
+        self.PINK = "\033[38;5;213m"
+        self.RESET = "\033[0m"
+        self.print_lock = threading.Lock()
 
-    def _ts(self):
-        return f"{self.DIM}[{datetime.now().strftime('%H:%M:%S')}]{self.RESET}"
+    def get_time(self):
+        return datetime.now().strftime("%H:%M:%S")
 
-    def _fmt(self, color, icon, tag, message, **kwargs):
-        with self._lock:
-            tag_str = f"{color}{icon} {tag}{self.RESET}"
-            tok = kwargs.get('token')
-            tok_part = f" {self.DIM}|{self.RESET} {self.NEON_PURPLE}{tok}{self.RESET}" if tok else ''
-            print(f"{self.prefix} {self._ts()} {tag_str} {self.DIM}\u2192{self.RESET} {self.SOFT}{message}{self.RESET}{tok_part}", flush=True)
+    def prefix(self, char, color):
+        return f"{self.DIM}({color}{char}{self.DIM}){self.RESET}"
 
-    def success(self, msg, **kw): self._fmt(self.NEON_GREEN,  "\u2713", "OK",    msg, **kw)
-    def fail(self,    msg, **kw): self._fmt(self.NEON_RED,    "\u2717", "FAIL",  msg, **kw)
-    def info(self,    msg, **kw): self._fmt(self.NEON_CYAN,   "\u2139", "INFO",  msg, **kw)
-    def warning(self, msg, **kw): self._fmt(self.NEON_YELLOW, "\u26a0", "WARN",  msg, **kw)
-    def updated(self, msg, **kw): self._fmt(self.NEON_GREEN,  "\u21bb", "UPD",   msg, **kw)
-    def retry(self,   msg, **kw): self._fmt(self.NEON_PURPLE, "\u21ba", "RETRY", msg, **kw)
+    def _log_token_status(self, char, char_color, tag, tag_color, status_text=None, **kwargs):
+        with self.print_lock:
+            time_str = f"{self.DIM}[{self.TIME_GRAY}{self.get_time()}{self.DIM}]{self.RESET}"
+            pfx = self.prefix(char, char_color)
+            tag_str = f"{tag_color}{tag:<6}{self.RESET}"
+            sep = f"{self.DIM}»{self.RESET}"
 
-zlog = _Logger()
+            parts = []
+            if 'token' in kwargs:
+                parts.append(f"{self.KEY_GRAY}token:{self.RESET} {self.WHITE}{kwargs['token']}")
+            if status_text:
+                status_color = self.SUCCESS if status_text.lower() in ['valid', 'success', 'ok', 'updated'] else (self.FAIL if status_text.lower() in ['locked', 'invalid', 'failed', 'error'] else self.WHITE)
+                parts.append(f"{self.KEY_GRAY}status:{self.RESET} {status_color}{status_text}")
 
-_BANNER_LINES = []
-_BANNER_COLORS = [
-    "\033[38;2;191;64;255m",
-    "\033[38;2;0;255;255m",
-    "\033[38;2;57;255;20m",
-    "\033[38;2;255;16;240m",
-]
+            for k, v in kwargs.items():
+                if k == 'token':
+                    continue
+                if k == 'lock':
+                    parts.append(f"{self.KEY_GRAY}lock:{self.RESET} {self.WARN}{v}")
+                elif k in ['type', 'action']:
+                    parts.append(f"{self.KEY_GRAY}{k}:{self.RESET} {self.SUCCESS}{v}")
+                elif k in ['nitro', 'boost']:
+                    parts.append(f"{self.KEY_GRAY}{k}:{self.RESET} {self.PINK}{v}")
+                elif k == 'age':
+                    parts.append(f"{self.KEY_GRAY}age:{self.RESET} {self.INFO}{v}")
+                elif k == 'redeemable':
+                    parts.append(f"{self.KEY_GRAY}redeemable:{self.RESET} {self.INFO}{v}")
+                elif k in ['retry_after', 'cooldown']:
+                    parts.append(f"{self.KEY_GRAY}{k}:{self.RESET} {self.WARN}{v}")
+                elif k == 'error':
+                    parts.append(f"{self.KEY_GRAY}error:{self.RESET} {self.FAIL}{v}")
+                elif k == 'detail':
+                    parts.append(f"{self.KEY_GRAY}detail:{self.RESET} {self.WHITE}{v}")
+                else:
+                    parts.append(f"{self.KEY_GRAY}{k}:{self.RESET} {self.WHITE}{v}")
+
+            details = f" {self.RESET}".join(parts)
+            print(f"{time_str} {pfx} {tag_str} {sep} {details}{self.RESET}", flush=True)
+
+    def success(self, msg='Valid', **kwargs):
+        self._log_token_status('+', self.SUCCESS, 'VALID', self.SUCCESS, status_text=msg, **kwargs)
+
+    def fail(self, msg, **kwargs):
+        tag = msg.upper()
+        if 'LOCK' in tag:
+            tag = 'LOCKED'
+        elif 'INVALID' in tag:
+            tag = 'INVALID'
+        elif 'FLAG' in tag:
+            tag = 'FLAGGED'
+        elif 'ERROR' in tag:
+            tag = 'ERROR'
+        else:
+            tag = 'FAILED'
+        self._log_token_status('-', self.FAIL, tag, self.FAIL, status_text=msg, **kwargs)
+
+    def warning(self, msg, **kwargs):
+        tag = 'RATELIMIT' if 'rate' in msg.lower() else 'WARN'
+        self._log_token_status('*', self.WARN, tag, self.WARN, status_text=msg, **kwargs)
+
+    def log_line(self, char, char_color, text):
+        with self.print_lock:
+            time_str = f"{self.DIM}[{self.TIME_GRAY}{self.get_time()}{self.DIM}]{self.RESET}"
+            pfx = self.prefix(char, char_color)
+            print(f"{time_str} {pfx} {text}{self.RESET}", flush=True)
+
+    def inf(self, text):
+        self.log_line('/', self.INFO, text)
+
+    def info(self, text, **kwargs):
+        if kwargs:
+            extra = ', '.join(f"{k}= {v}" for k, v in kwargs.items())
+            self.inf(f"{text} -> {extra}")
+        else:
+            self.inf(text)
+
+    def input(self, text):
+        time_str = f"{self.DIM}[{self.TIME_GRAY}{self.get_time()}{self.DIM}]{self.RESET}"
+        pfx = self.prefix('?', self.PURPLE)
+        print(f"\n{time_str} {pfx} {self.INFO}{text}{self.RESET} ", end='', flush=True)
+
+    def __call__(self, log_type: str, token: str, message: str):
+        masked = mask_token(token)
+        action = None
+        detail = None
+        if message.startswith('[') and message.endswith(']') and ' : ' in message:
+            inner = message[1:-1]
+            parts = inner.split(' : ', 1)
+            if len(parts) == 2:
+                action = parts[0].strip()
+                detail = parts[1].strip()
+
+        kw = {'token': masked}
+        if action and detail:
+            if log_type == 'SUCCESS':
+                self._log_token_status('+', self.SUCCESS, 'UPDATED', self.SUCCESS, action=action, detail=detail, **kw)
+            elif log_type == 'FAILED':
+                self._log_token_status('-', self.FAIL, 'ERROR', self.FAIL, error=f"{action} - {detail}", **kw)
+            elif log_type == 'WARN':
+                tag = 'RATELIMIT' if 'rate' in action.lower() or 'rate' in detail.lower() else 'WARN'
+                self._log_token_status('*', self.WARN, tag, self.WARN, action=action, detail=detail, **kw)
+            else:
+                self._log_token_status('/', self.INFO, 'INFO', self.INFO, action=action, detail=detail, **kw)
+        else:
+            clean = message.strip('[]')
+            if log_type == 'SUCCESS':
+                self._log_token_status('+', self.SUCCESS, 'VALID', self.SUCCESS, status_text=clean, **kw)
+            elif log_type == 'FAILED':
+                self.fail(clean, **kw)
+            elif log_type == 'WARN':
+                self.warning(clean, **kw)
+            else:
+                self._log_token_status('/', self.INFO, 'INFO', self.INFO, status_text=clean, **kw)
+
+
+log = Logger()
+zlog = log
 
 _title_done = False
 
 def _title_loop():
     while not _title_done:
         try:
+            time.sleep(0.5)
             with stats_lock:
                 t = stats['total']; s = stats['success']; f = stats['failed']
                 elapsed = max(time.time() - stats['start_time'], 0.001)
             processed = s + f
-            pct = processed / t * 100 if t else 0
-            title = (f'Zenkai Humanizer  |  Success: {s}  |  Failed: {f}  |  '
-                     f'Progress: {processed}/{t} ({pct:.1f}%)  |  CPS: {processed/elapsed:.2f}')
+            pct = (processed / t * 100) if t else 0
+            cps = processed / elapsed if elapsed else 0
             if os.name == 'nt':
-                ctypes.windll.kernel32.SetConsoleTitleW(title)
+                ctypes.windll.kernel32.SetConsoleTitleW(
+                    f'Zenkai | Success: {s} | Failed: {f} | '
+                    f'Progress: {pct:.1f}% | CPS: {cps:.1f}'
+                )
         except Exception:
             pass
-        time.sleep(0.5)
 
 def get_timestamp() -> str:
     return datetime.now().strftime('%H:%M:%S')
 
-def display_banner():
+def print_banner():
     os.system('cls' if os.name == 'nt' else 'clear')
-    try:
-        w = shutil.get_terminal_size().columns
-    except Exception:
-        w = 100
-    for i, line in enumerate(_BANNER_LINES):
-        pad = max(0, (w - len(line)) // 2)
-        print(f"{_BANNER_COLORS[i % len(_BANNER_COLORS)]}{' ' * pad}{line}\033[0m")
     print()
-    dev = "Developer: zenkai. @netbanking"
-    pad = max(0, (w - len(dev)) // 2)
-    print(f"{' ' * pad}\033[38;5;231m{dev}\033[0m\n")
+    purple = "\033[38;5;141m"
+    dim = "\033[38;5;240m"
+    gray = "\033[38;5;245m"
+    white = "\033[38;5;255m"
+    reset = "\033[0m"
+    print(f"  {purple}Dev: {white}@16zenkai {dim}• {gray}{reset}")
+    print()
+
+def display_banner():
+    print_banner()
 
 def mask_token(token: str) -> str:
-    return (token[:10] if len(token) >= 10 else token) + '****'
-
-def log(log_type: str, token: str, message: str):
-    masked = mask_token(token)
-    label = message
-    if message.startswith('[') and message.endswith(']') and ' : ' in message:
-        inner = message[1:-1]
-        parts = inner.split(' : ', 1)
-        if len(parts) == 2:
-            label = f"{parts[0].strip()}: {parts[1].strip()}"
-    if log_type == 'SUCCESS':
-        zlog.success(label, token=masked)
-    elif log_type == 'FAILED':
-        zlog.fail(label, token=masked)
-    elif log_type == 'WARN':
-        zlog.warning(label, token=masked)
-    else:
-        zlog.info(label, token=masked)
+    token_only = token.split(':')[-1]
+    return (token_only[:12] + '****') if len(token_only) >= 12 else token_only
 
 def log_simple(log_type: str, message: str):
-    if log_type == 'FAILED':
-        zlog.fail(message)
+    if log_type == 'SUCCESS':
+        log.log_line('+', log.SUCCESS, message)
+    elif log_type == 'FAILED':
+        log.log_line('-', log.FAIL, message)
     elif log_type == 'WARN':
-        zlog.warning(message)
+        log.log_line('*', log.WARN, message)
     else:
-        zlog.info(message)
+        log.inf(message)
+
+def wait_for_enter():
+    try:
+        import msvcrt
+        while True:
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+                if key in (b'\r', b'\n'):
+                    break
+            time.sleep(0.05)
+        print()
+    except Exception:
+        input()
 
 
 def load_file_lines(file_path: Path) -> List[str]:
@@ -1012,18 +1125,19 @@ def main():
     title_thread.start()
 
     try:
-        ti = input(f"\033[38;5;205m[\033[38;5;231m?\033[38;5;205m]\033[0m How many threads? (Default: {MAX_THREADS}): ").strip()
+        log.input(f"How many threads? (Default: {MAX_THREADS}):")
+        ti = input().strip()
         if ti:
             MAX_THREADS = int(ti)
     except ValueError:
-        log_simple('WARN', f'Invalid thread count. Using default: {MAX_THREADS}')
+        log.warning(f'Invalid thread count. Using default: {MAX_THREADS}')
 
     for d in [DATA_DIR, INPUT_DIR, AVATARS_DIR, BANNERS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
     tokens = load_tokens(TOKENS_FILE)
     if not tokens:
-        log_simple('FAILED', f'No valid tokens found in {TOKENS_FILE}')
+        log.fail(f'No valid tokens found in {TOKENS_FILE}')
         return
 
     with stats_lock:
@@ -1057,10 +1171,13 @@ def main():
                 _av_cache[path] = b64
         return b64
 
+    log.inf(f"Total tokens loaded -> count= {len(tokens)}")
+    if proxies:
+        log.inf(f"Total proxies loaded -> count= {len(proxies)}")
     if avatar_files:
-        log_simple('INFO', f'{len(avatar_files)} avatar(s) loaded')
-
-    print('')
+        log.inf(f"Total avatars loaded -> count= {len(avatar_files)}")
+    log.inf(f"Starting with {MAX_THREADS} threads")
+    print()
     SUCCESS_FILE.write_text('')
     FAILED_FILE.write_text('')
 
@@ -1093,37 +1210,34 @@ def main():
 
     _title_done = True
     elapsed = time.time() - stats['start_time']
-    success_rate = stats['success'] / stats['total'] * 100 if stats['total'] > 0 else 0
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
 
-    C  = "\033[38;2;0;255;255m"
-    G  = "\033[38;2;57;255;20m"
-    R  = "\033[38;2;255;49;49m"
-    Y  = "\033[38;2;255;236;39m"
-    P  = "\033[38;2;191;64;255m"
-    D  = "\033[38;2;90;90;120m"
-    S  = "\033[38;2;180;180;200m"
-    RS = "\033[0m"
+    dim = "\033[38;5;240m"
+    gray = "\033[38;5;245m"
+    white = "\033[38;5;255m"
+    green = "\033[38;5;120m"
+    red = "\033[38;5;203m"
+    cyan = "\033[38;5;75m"
+    reset = "\033[0m"
 
-    line = '─' * 60
     print()
-    print(f"{D}╭─ {C}FINAL SUMMARY {D}{'─' * 45}╮{RS}")
-    print(f"{D}│{RS}  {S}Total{RS} {C}{stats['total']}{RS}   {S}Success{RS} {G}{stats['success']}{RS}   {S}Failed{RS} {R}{stats['failed']}{RS}   {S}Rate{RS} {Y}{success_rate:.1f}%{RS}")
-    print(f"{D}│{RS}  {S}Elapsed{RS} {C}{minutes}m {seconds}s{RS}")
+    log.log_line('/', log.INFO, f"{white}Minutes {dim}-> {gray}count= {reset}{cyan}{minutes}{reset}{gray}, {white}Seconds {dim}-> {gray}count= {reset}{cyan}{seconds}{reset}")
+    log.log_line('/', log.INFO, f"{white}Total {dim}-> {gray}count= {reset}{cyan}{stats['total']}{reset}")
+    log.log_line('+', log.SUCCESS, f"{white}Success {dim}-> {gray}count= {reset}{green}{stats['success']}{reset}")
+    log.log_line('-', log.FAIL, f"{white}Failed {dim}-> {gray}count= {reset}{red}{stats['failed']}{reset}")
     if proxy_manager:
         ps = proxy_manager.get_stats()
-        print(f"{D}│{RS}  {S}Proxies{RS} {G}{ps['active']}{RS} {D}good{RS} / {R}{ps['bad']}{RS} {D}bad{RS}")
-    print(f"{D}╰{line}╯{RS}")
-    print(f"{P}  bas cutie ab band karo aur sojao <3{RS}\n")
+        log.log_line('/', log.INFO, f"{white}Proxies {dim}-> {green}{ps['active']}{dim} good / {red}{ps['bad']}{dim} bad{reset}")
 
     if proxy_manager and proxy_manager.bad_proxies:
         proxy_lines = load_file_lines(PROXIES_FILE)
         cleaned = [p for p in proxy_lines if parse_proxy(p) not in proxy_manager.bad_proxies]
         PROXIES_FILE.write_text('\n'.join(cleaned) + '\n')
-        log_simple('INFO', f'Removed {len(proxy_lines) - len(cleaned)} bad proxies from proxies.txt')
+        log.inf(f'Removed {len(proxy_lines) - len(cleaned)} bad proxies from proxies.txt')
 
-    input(f"\033[38;5;244mPress Enter to exit...\033[0m")
+    log.input("Press Enter to exit")
+    wait_for_enter()
 
 
 if __name__ == '__main__':
